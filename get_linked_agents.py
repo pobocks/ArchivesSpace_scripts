@@ -1,59 +1,48 @@
 import json
-import requests
+from asnake.aspace import ASpace
+
 import csv
 
-aspace_url = 'http://localhost:8080'
-username = 'admin'
-password = 'admin'
-repo_num = '2'
+aspace = ASpace(baseurl='http://localhost:8080',
+                username = 'admin'
+                password = 'admin')
 
-#Do you authentication thing
-auth = requests.post(aspace_url+'/users/'+username+'/login?password='+password).json()
-session = auth["session"]
-headers = {'X-ArchivesSpace-Session':session}
-
-#set endpoints with all ids to get everything
-endpoint = '/repositories/2/resources?all_ids=true'
-endpoint2 = '/repositories/2/accessions?all_ids=true'
-
-#then save all the ids
-ids = requests.get(aspace_url + endpoint, headers=headers).json()
-acc_ids = requests.get(aspace_url + endpoint2, headers=headers).json()
-
+repo = aspace.repositories(2)
 
 records = []
-#find all resources and accessions that have linked agents
-for id in ids:
-    resource_uri = '/repositories/2/resources/'+str(id)
-    resource_json = requests.get(aspace_url + resource_uri, headers=headers).json()
+for resource in repo.resources:
+    try: 
+        # not sure what the ref= is doing in original code
+        # operating on the principle that it's intended as a check that first agent exists and is a ref?
+        if next(resource.linked_agents).is_ref:
+            records.append(resource.json())
+    except: 
+        continue
+        
+for accession in repo.accessions:
     try:
-        ref = resource_json['linked_agents'][0]['ref']
-        records.append(resource_json)
+        if next(accession.linked_agents).is_ref:
+            records.append(accession.json())
     except:
         continue
-
-for acc_id in acc_ids:
-    acc_uri = '/repositories/2/accessions/'+str(acc_id)
-    acc_json = requests.get(aspace_url + acc_uri, headers=headers).json()
-    try:
-        ref = acc_json['linked_agents'][0]['ref']
-        records.append(acc_json)
-    except:
-        continue
-
+    
 #open a cvs file for output
 f=csv.writer(open('new_agents.csv', 'wb'))
 f.writerow(['uri']+['name']+['related record'])
 
 selected_records = []
 #get all records that are linked to a specific agent
+# doing straight transliteration, but I think this would be clearer as:
+# for record in records:
+#     for agent in record['linked_agents']:
 for i in range (0, len (records)):
     for j in range (0, len (records[i]['linked_agents'])):
         uri = records[i]['uri']
         title = records[i]['title']
         needs_review = records[i]['linked_agents'][j].get('ref')
         if needs_review == '/agents/software/2':
-            ag_json = requests.get(aspace_url + uri, headers=headers).json()
+            # shows a possible lack in ASnake abstraction layer, should be a way to put in URL get JSONModel obj?
+            ag_json = aspace.client.get(uri).json()
             selected_records.append(ag_json)
  
 #Now take the records found above and get any related agent and write to csv           
@@ -61,6 +50,6 @@ for i in range (0, len (selected_records)):
     for j in range (0, len (selected_records[i]['linked_agents'])):
         uri = selected_records[i]['uri']
         agents = selected_records[i]['linked_agents'][j].get('ref')
-        agent_json = requests.get(aspace_url + agents, headers=headers).json()
+        agent_json = aspace.client.get(agents).json()
         title = agent_json['title']
         f.writerow([agents]+[title]+[uri])
